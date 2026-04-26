@@ -237,7 +237,7 @@ bootstrap logic unchanged.
 
 ### 10. Bootstrap diagnostic plot
 
-`bootplot()` compares the empirical distribution of bootstrap ΔOFV values to a
+`bootstrapPlot()` compares the empirical distribution of bootstrap ΔOFV values to a
 chi-squared reference distribution, providing a graphical check of whether the
 bootstrap sample size is adequate for the model complexity (Niebecker & Karlsson 2013).
 The ΔOFV curve should lie on or below the chi-squared reference curve; a curve that

@@ -11,8 +11,8 @@ Bootstrap resampling tools for nlmixr2 fits.
 \seealso{
 Useful links:
 \itemize{
-  \item \url{https://github.com/nlmixr2/nlmixr2boot}
-  \item Report bugs at \url{https://github.com/nlmixr2/nlmixr2boot/issues}
+  \item \url{https://github.com/kestrel99/nlmixr2boot}
+  \item Report bugs at \url{https://github.com/kestrel99/nlmixr2boot/issues}
 }
 
 }
@@ -23,13 +23,6 @@ Authors:
 \itemize{
   \item Matthew Fidler \email{matthew.fidler@gmail.com} (\href{https://orcid.org/0000-0001-8538-6691}{ORCID})
   \item Vipul Mann \email{vm2583@columbia.edu}
-  \item Vishal Sarsani \email{vsarsani@umass.edu} (\href{https://orcid.org/0000-0002-9272-3438}{ORCID})
-  \item Bill Denney \email{wdenney@humanpredictions.com} (\href{https://orcid.org/0000-0002-5759-428X}{ORCID})
-}
-
-Other contributors:
-\itemize{
-  \item Christian Bartels \email{christian.bartels@novartis.com} [contributor]
 }
 
 }

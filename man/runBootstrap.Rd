@@ -172,7 +172,7 @@ withr::with_tempdir({ # Run example in temp dir
   # This change will affect any simulations with uncertainty in their parameters
 
   # You may also do a chi-square diagnostic plot check for the bootstrap with
-  bootplot(fit)
+  bootstrapPlot(fit)
 })
 }
 }

@@ -118,11 +118,11 @@
 #' covarsVec <- c("WT")
 #'
 #' # Normalized covariate (replaced)
-#' df1 <- normalizedData(d, covarsVec, replace = TRUE)
+#' df1 <- bootstrapNormalizedData(d, covarsVec, replace = TRUE)
 #'
 #' # Normalized covariate (without replacement)
-#' df2 <- normalizedData(d, covarsVec, replace = FALSE)
-normalizedData <- function(data, covarsVec, replace = TRUE) {
+#' df2 <- bootstrapNormalizedData(d, covarsVec, replace = FALSE)
+bootstrapNormalizedData <- function(data, covarsVec, replace = TRUE) {
   checkmate::assert_character(covarsVec)
   .normalizedDFs <- lapply(covarsVec, .normalizeDf, data = data)
 
@@ -162,11 +162,11 @@ normalizedData <- function(data, covarsVec, replace = TRUE) {
 #' covarsVec <- c("WT")
 #'
 #' # Stratified cross-validation data with CMT
-#' df1 <- foldgen(d, nfold = 5, stratVar = "CMT")
+#' df1 <- bootstrapFoldGen(d, nfold = 5, stratVar = "CMT")
 #'
 #' # Stratified cross-validation data with ID (individual)
-#' df2 <- foldgen(d, nfold = 5, stratVar = NULL)
-foldgen <- function(data, nfold = 5, stratVar = NULL) {
+#' df2 <- bootstrapFoldGen(d, nfold = 5, stratVar = NULL)
+bootstrapFoldGen <- function(data, nfold = 5, stratVar = NULL) {
   # check if data frame
   checkmate::assert_data_frame(data, min.cols = 7)
   # check if user want to stratify on a variable , if not default is on individual
@@ -266,8 +266,8 @@ foldgen <- function(data, nfold = 5, stratVar = NULL) {
 #'
 #' @examples
 #' # Simulate 1000 creatine clearance values with median of 71.7 within range of c(6.7,140)
-#' creatCl <- optimUnisampling(xvec = c(6.7, 140), N = 1000, medValue = 71.7, floorT = FALSE)
-optimUnisampling <- function(xvec, N = 1000, medValue, floorT = TRUE) {
+#' creatCl <- bootstrapOptimUnisampling(xvec = c(6.7, 140), N = 1000, medValue = 71.7, floorT = FALSE)
+bootstrapOptimUnisampling <- function(xvec, N = 1000, medValue, floorT = TRUE) {
   # Function to calculate distance between sampling median and desired
   fun <- function(xvec, N = 1000) {
     xmin <- xvec[1]
@@ -290,7 +290,7 @@ optimUnisampling <- function(xvec, N = 1000, medValue, floorT = TRUE) {
   } else if (xrmin == xvec[1] && xrmax == xvec[2]) {
     return(sampled)
   }
-  optimUnisampling(xvec, N = 1000, medValue)
+  bootstrapOptimUnisampling(xvec, N = N, medValue = medValue, floorT = floorT)
 }
 
 #' Format confidence bounds for a variable into bracketed notation using string formatting
@@ -686,7 +686,7 @@ addConfboundsToVar <- function(var, confLower, confUpper, sigdig = 3) {
 #'   # This change will affect any simulations with uncertainty in their parameters
 #'
 #'   # You may also do a chi-square diagnostic plot check for the bootstrap with
-#'   bootplot(fit)
+#'   bootstrapPlot(fit)
 #' })
 #' }
 runBootstrap <- function(
@@ -1745,7 +1745,7 @@ assignToEnv <- function(namedVars, fitobject) {
   })
 }
 
-#' @title Produce delta objective function for boostrap
+#' @title Produce delta objective function for bootstrap
 #'
 #' @param x fit object
 #' @param ... other parameters
@@ -1757,14 +1757,14 @@ assignToEnv <- function(namedVars, fitobject) {
 #' PAGE 2013.
 #' <https://www.page-meeting.org/?abstract=2899>
 #' @export
-bootplot <- function(x, ...) {
-  UseMethod("bootplot")
+bootstrapPlot <- function(x, ...) {
+  UseMethod("bootstrapPlot")
 }
 
-#' @rdname bootplot
+#' @rdname bootstrapPlot
 #' @export
 #' @importFrom ggplot2 .data
-bootplot.nlmixr2FitCore <- function(x, ...) {
+bootstrapPlot.nlmixr2FitCore <- function(x, ...) {
   .fitName <- as.character(substitute(x))
   if (inherits(x, "nlmixr2FitCore")) {
     if (exists("bootSummary", x$env) && (!exists(".bootPlotData", x$env))) {
@@ -1843,28 +1843,4 @@ bootplot.nlmixr2FitCore <- function(x, ...) {
   } else {
     stop("this is not a nlmixr2 object", call. = FALSE)
   }
-}
-
-#' Bootstrap nlmixr2 fit
-#'
-#' @description
-#' `r lifecycle::badge("deprecated")`
-#'
-#' `bootstrapFit()` has been renamed to [runBootstrap()]. This alias is
-#' provided for backward compatibility and will be removed in a future release.
-#'
-#' @inheritParams runBootstrap
-#' @inherit runBootstrap return
-#' @export
-#' @keywords internal
-bootstrapFit <- function(...) {
-  .Deprecated(
-    "runBootstrap",
-    package = "nlmixr2boot",
-    msg = paste0(
-      "'bootstrapFit()' has been renamed to 'runBootstrap()'. ",
-      "Please update your code."
-    )
-  )
-  runBootstrap(...)
 }

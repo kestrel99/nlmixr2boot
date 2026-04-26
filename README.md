@@ -1,15 +1,18 @@
 # nlmixr2boot
 
 `nlmixr2boot` provides nonparametric bootstrap tools for `nlmixr2`
-population PK/PD models.
+population PK/PD models, expanded from an initial implementation by
+Matt Fidler and Vipul Mann in `nlmixr2extra`.
 
 The package focuses on subject-level bootstrap workflows for `nlmixr2` fits,
 including:
 
 * `runBootstrap()` for cached, resumable bootstrap refits
 * `sampling()` for subject-level resampling with replacement
-* `normalizedData()` for population-level covariate normalization helpers
-* `bootplot()` for bootstrap delta-OFV diagnostics
+* `bootstrapNormalizedData()` for population-level covariate normalization helpers
+* `bootstrapFoldGen()` for stratified fold generation utilities
+* `bootstrapOptimUnisampling()` for bounded uniform sampling with an approximate target median
+* `bootstrapPlot()` for bootstrap delta-OFV diagnostics
 
 `nlmixr2boot` works alongside `nlmixr2utils`, which provides the shared
 `nlmixr2()`/`ini()`/`model()` helpers and worker-plan infrastructure used by
@@ -23,23 +26,16 @@ Using `pak`:
 
 ```r
 pak::pkg_install(c(
-  "nlmixr2/nlmixr2utils",
-  "nlmixr2/nlmixr2boot"
+  "kestrel99/nlmixr2utils",
+  "kestrel99/nlmixr2boot"
 ))
 ```
 
 Using `remotes`:
 
 ```r
-remotes::install_github("nlmixr2/nlmixr2utils")
-remotes::install_github("nlmixr2/nlmixr2boot")
-```
-
-If you are working locally with the split repositories:
-
-```r
-devtools::install_local("../nlmixr2utils")
-devtools::install_local("../nlmixr2boot")
+remotes::install_github("kestrel99/nlmixr2utils")
+remotes::install_github("kestrel99/nlmixr2boot")
 ```
 
 ## Basic Use
@@ -81,10 +77,43 @@ boot <- withr::with_tempdir({
 boot$summary
 ```
 
-## References
-
 The implementation follows standard nonparametric bootstrap workflows for
 population PK/PD models, adapted for `nlmixr2` fits.
+
+## How this differs from `nlmixr2extra`
+
+The underlying statistical workflow is the same subject-level nonparametric
+bootstrap that started in `nlmixr2extra`: resample subjects with replacement,
+refit the model to each bootstrap dataset, and summarize the resulting fixed
+effects and OMEGA estimates. The main differences in `nlmixr2boot` are in how
+the bootstrap is executed and how results are stored.
+
+Compared with `bootstrapFit()` in `nlmixr2extra`, `runBootstrap()`:
+
+* writes each run to a dedicated bootstrap directory such as
+  `<fitName>_boot_1` (or a user-supplied `outputDir`) rather than only using
+  the legacy `nlmixr2BootstrapCache_*` cache naming scheme
+* records extra run artifacts, including `bootstrap_seed.rds`,
+  `bootstrap_results.csv`, and `bootstrap_summary.txt`, so the bootstrap is
+  easier to inspect outside the fitted object
+* resumes more explicitly from the on-disk replicate files and keeps failed
+  replicates as placeholders on disk, excluding them from the final summaries
+  while still preserving the run history
+* supports explicit `workers` control through `nlmixr2utils` worker-plan
+  helpers for sequential or parallel replicate refits
+* returns a standalone result object with `seed`, `results`, `summary`,
+  `outputDir`, and `timestamp`, instead of only returning the modified fit or
+  the legacy fit/model lists
+* stores bootstrap results in a single `fit$bootstrap` list when
+  `updateFit = TRUE`, rather than rewriting several fit environment objects
+  such as `parFixedDf`, `parFixed`, `bootSummary`, `bootCovMatrix`, and
+  `covMethod`
+
+One important practical consequence is that `nlmixr2boot` does not
+automatically replace the active covariance method on the original fit.
+Instead, the bootstrap covariance and correlation matrices are stored in
+`fit$bootstrap`, so you can inspect or activate them later without the
+bootstrap run mutating the rest of the fit summary in place.
 
 For a worked example, see:
 `vignette("runBootstrap", package = "nlmixr2boot")`.
