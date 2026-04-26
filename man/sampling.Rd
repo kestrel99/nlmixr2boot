@@ -40,8 +40,9 @@ returns a bootstrap sampled dataframe object
 Perform bootstrap-sampling from a given dataframe
 }
 \examples{
-sampling(data)
-sampling(data, 10)
+d <- data.frame(ID = rep(1:4, each = 2), DV = c(10, 12, 9, 11, 13, 12, 8, 9))
+sampling(d)
+sampling(d, 3L)
 }
 \author{
 Vipul Mann, Matthew Fidler

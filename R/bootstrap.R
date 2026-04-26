@@ -882,8 +882,9 @@ runBootstrap <- function(
 #' @author Vipul Mann, Matthew Fidler
 #'
 #' @examples
-#' sampling(data)
-#' sampling(data, 10)
+#' d <- data.frame(ID = rep(1:4, each = 2), DV = c(10, 12, 9, 11, 13, 12, 8, 9))
+#' sampling(d)
+#' sampling(d, 3L)
 #' @export
 sampling <- function(
   data,
@@ -894,19 +895,6 @@ sampling <- function(
   stratVar
 ) {
   checkmate::assert_data_frame(data)
-  if (is.null(nsamp)) {
-    nsamp <- length(unique(data[, uid_colname]))
-  } else {
-    checkmate::assert_integerish(nsamp, len = 1, any.missing = FALSE, lower = 2)
-  }
-
-  if (performStrat && missing(stratVar)) {
-    print("stratVar is required for stratifying")
-    stop("aborting... stratVar not specified", call. = FALSE)
-  }
-
-  checkmate::assert_integerish(nsamp, lower = 2, len = 1, any.missing = FALSE)
-
   if (missing(uid_colname)) {
     # search the dataframe for a column name of 'ID'
     colNames <- colnames(data)
@@ -919,6 +907,19 @@ sampling <- function(
   } else {
     checkmate::assert_character(uid_colname)
   }
+
+  if (is.null(nsamp)) {
+    nsamp <- length(unique(data[, uid_colname]))
+  } else {
+    checkmate::assert_integerish(nsamp, len = 1, any.missing = FALSE, lower = 2)
+  }
+
+  if (performStrat && missing(stratVar)) {
+    print("stratVar is required for stratifying")
+    stop("aborting... stratVar not specified", call. = FALSE)
+  }
+
+  checkmate::assert_integerish(nsamp, lower = 2, len = 1, any.missing = FALSE)
 
   if (performStrat) {
     stratLevels <-

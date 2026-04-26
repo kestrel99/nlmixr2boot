@@ -20,9 +20,7 @@ BugReports: https://github.com/kestrel99/nlmixr2boot/issues
 Imports:
     checkmate,
     cli (>= 3.4.0),
-    future,
     ggplot2,
-    lifecycle,
     nlme,
     nlmixr2est (>= 5.0.0),
     nlmixr2utils,
@@ -31,6 +29,8 @@ Imports:
     utils
 Suggests:
     digest,
+    future,
+    ggtext,
     knitr,
     nlmixr2data,
     rmarkdown,

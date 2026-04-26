@@ -25,6 +25,12 @@ test_that("sampling: default nsamp equals number of unique subjects in data", {
   expect_equal(length(unique(out$ID)), 5L)
 })
 
+test_that("sampling: default ID column is used when uid_colname is omitted", {
+  d <- data.frame(ID = rep(1:5, each = 3), y = rnorm(15))
+  out <- sampling(d)
+  expect_equal(length(unique(out$ID)), 5L)
+})
+
 test_that("sampling: IDs are renumbered 1..nsamp", {
   d <- data.frame(ID = rep(1:5, each = 3), y = rnorm(15))
   out <- sampling(d, nsamp = 5L)
