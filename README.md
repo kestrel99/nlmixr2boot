@@ -91,14 +91,14 @@ the bootstrap is executed and how results are stored.
 Compared with `bootstrapFit()` in `nlmixr2extra`, `runBootstrap()`:
 
 * writes each run to a dedicated bootstrap directory such as
-  `<fitName>_boot_1` (or a user-supplied `outputDir`) rather than only using
-  the legacy `nlmixr2BootstrapCache_*` cache naming scheme
-* records extra run artifacts, including `bootstrap_seed.rds`,
-  `bootstrap_results.csv`, and `bootstrap_summary.txt`, so the bootstrap is
-  easier to inspect outside the fitted object
-* resumes more explicitly from the on-disk replicate files and keeps failed
-  replicates as placeholders on disk, excluding them from the final summaries
-  while still preserving the run history
+  `<fitName>_boot_1` (or a user-supplied `outputDir`) using the shared
+  numbered run-directory helpers from `nlmixr2utils`
+* records extra run artifacts, including `boot_seed.rds`, `raw_results.csv`,
+  and `bootstrap_summary.txt`, so the bootstrap is easier to inspect outside
+  the fitted object
+* resumes from shared on-disk task caches for sampled datasets, abbreviated
+  model summaries, and fitted objects while preserving failed replicates in the
+  canonical raw-results table
 * supports explicit `workers` control through `nlmixr2utils` worker-plan
   helpers for sequential or parallel replicate refits
 * returns a standalone result object with `seed`, `results`, `summary`,

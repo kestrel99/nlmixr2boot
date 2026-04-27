@@ -175,16 +175,17 @@ covariance can be restored with `"linFim"`.
 
 ### 5. Per-replicate results
 
-The `results` element (also written as `bootstrap_results.csv`) contains one row per
-successful replicate with the model-scale estimate and back-transformed value for every
-fixed-effect parameter:
+The `results` element (also written as `raw_results.csv`) contains the canonical
+shared raw-results table: one reference row (`sample = 0`) plus one row per
+bootstrap replicate with the fitted parameter values and standard diagnostics:
 
 ```{r per-replicate}
 head(boot_result$results)
 ```
 
 This table is useful for computing custom summaries, visualising the bootstrap
-distribution, or identifying outlier replicates.
+distribution, identifying failed replicates, or reusing bootstrap parameter
+sets through `nlmixr2utils::parseRawResultsParams()`.
 
 ---
 
@@ -253,11 +254,13 @@ whether the replicate count was sufficient for the model complexity.
 
 | File | Contents |
 |---|---|
-| `boot_data_{N}.rds` | Resampled dataset for replicate N |
-| `modelsEnsemble_{N}.rds` | Abbreviated fit summary for replicate N |
-| `fitEnsemble_{N}.rds` | Full fit object for replicate N |
-| `bootstrap_seed.rds` | Full RNG state before resampling |
-| `bootstrap_results.csv` | Per-replicate parameter table (one row per replicate) |
+| `boot_data_cache/` | Cached resampled datasets keyed by replicate |
+| `models_cache/` | Cached abbreviated fit summaries keyed by replicate |
+| `fits_cache/` | Cached full fit objects keyed by replicate |
+| `boot_seed.rds` | Persisted bootstrap master seed |
+| `raw_results.csv` | Canonical shared raw-results table (reference + replicates) |
+| `raw_results.rds` | RDS copy of the canonical raw-results table |
+| `raw_results_header.json` | Schema metadata for the canonical raw-results table |
 | `bootstrap_summary.txt` | Human-readable summary with CIs |
 
 The numbered output directory is named `<fitName>_boot_<N>` and is created

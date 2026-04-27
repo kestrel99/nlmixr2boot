@@ -277,19 +277,11 @@ withr::with_tempdir({
     ))
 
     fit1 <- suppressMessages(runBootstrap(fit, nboot = 2, restart = TRUE))
-    fit2 <- suppressMessages(runBootstrap(fit, nboot = 4, restart = FALSE))
+    suppressMessages(runBootstrap(fit, nboot = 4, restart = FALSE))
 
     output_dir <- fit1$outputDir # absolute path set by runBootstrap
-
-    fnameBootDataPattern <- paste0("boot_data", "_", "[0-9]+", ".rds")
-
-    files <- list.files(
-      output_dir,
-      pattern = fnameBootDataPattern,
-      full.names = TRUE
-    )
-
-    fitdata <- lapply(files, readRDS)
+    cache <- nlmixr2utils::taskCache(output_dir, "boot_data")
+    fitdata <- lapply(as.character(1:4), cache$get)
 
     a <- digest::digest(fitdata[[1]])
     b <- digest::digest(fitdata[[3]])
@@ -350,6 +342,13 @@ withr::with_tempdir({
     expect_true(all(
       bootSummary1$parFixedDf$confUpper > bootSummary2$parFixedDf$confUpper
     ))
+
+    lapply(
+      list.files("./", pattern = "^fit_boot_[0-9]+$", full.names = TRUE),
+      function(x) {
+        unlink(x, recursive = TRUE, force = TRUE)
+      }
+    )
   })
 
   test_that("expected columns in fit$parFixedDf object should match", {
@@ -399,7 +398,7 @@ withr::with_tempdir({
     expect_equal(colsAfter, colsBefore)
 
     lapply(
-      list.files("./", pattern = "nlmixr2BootstrapCache_.*"),
+      list.files("./", pattern = "^fit_boot_[0-9]+$", full.names = TRUE),
       function(x) {
         unlink(x, recursive = TRUE, force = TRUE)
       }
@@ -444,13 +443,12 @@ withr::with_tempdir({
     if (inherits(fit, "try-error")) {
       skip("SAEM fit setup failed in this environment")
     }
+    fit1 <- NULL
     suppressMessages(
       expect_error(fit1 <- runBootstrap(fit, nboot = 2, restart = TRUE), NA)
     )
 
-    output_dir <-
-      paste0("nlmixr2BootstrapCache_", "fit", "_", fit$bootstrapMd5)
-    unlink(output_dir, recursive = TRUE, force = TRUE)
+    unlink(fit1$outputDir, recursive = TRUE, force = TRUE)
   })
 
   # ---------------------------------------------------------------------------
@@ -551,5 +549,63 @@ withr::with_tempdir({
       list.files("./", pattern = "^fit_boot_[0-9]+$", full.names = TRUE),
       function(x) unlink(x, recursive = TRUE, force = TRUE)
     )
+  })
+
+  test_that("runBootstrap writes canonical raw results for downstream reuse", {
+    one.cmt <- function() {
+      ini({
+        tka <- 0.45
+        tcl <- 1
+        tv <- 3.45
+        eta.ka ~ 0.6
+        eta.cl ~ 0.3
+        eta.v ~ 0.1
+        add.sd <- 0.7
+      })
+      model({
+        ka <- exp(tka + eta.ka)
+        cl <- exp(tcl + eta.cl)
+        v <- exp(tv + eta.v)
+        linCmt() ~ add(add.sd)
+      })
+    }
+    skip_if_not_installed("rxode2")
+    suppressMessages(suppressWarnings(
+      fit <- nlmixr2(
+        one.cmt,
+        nlmixr2data::theo_sd,
+        est = "focei",
+        control = list(print = 0, eval.max = 10),
+        table = list(npde = TRUE, cwres = TRUE)
+      )
+    ))
+
+    res <- suppressMessages(
+      runBootstrap(
+        fit,
+        nboot = 2,
+        restart = TRUE,
+        workers = 1L
+      )
+    )
+    raw <- nlmixr2utils::readRawResults(res$outputDir)
+
+    expect_equal(raw$sample, 0:2)
+    expect_equal(raw$source, rep("bootstrap", 3L))
+    expect_equal(raw$role, c("reference", "sample", "sample"))
+
+    parsed <- nlmixr2utils::parseRawResultsParams(
+      raw,
+      fit,
+      filter = quote(role == "sample" & !is.na(objf))
+    )
+    expect_true(length(parsed) >= 1L)
+    expect_true(all(vapply(
+      parsed,
+      function(x) "theta" %in% names(x),
+      logical(1)
+    )))
+
+    unlink(res$outputDir, recursive = TRUE, force = TRUE)
   })
 })

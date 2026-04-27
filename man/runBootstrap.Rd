@@ -14,7 +14,7 @@ runBootstrap(
   pvalues = NULL,
   restart = FALSE,
   plotHist = FALSE,
-  fitName = as.character(substitute(fit)),
+  fitName = NULL,
   outputDir = NULL,
   updateFit = TRUE,
   returnType = c("model", "fitList", "modelList"),
@@ -58,8 +58,9 @@ to be restarted; default value is FALSE}
 how well the bootstrap is doing.  By default this is turned off
 (\code{FALSE})}
 
-\item{fitName}{Name of fit to be saved (by default the variable
-name supplied to fit)}
+\item{fitName}{Optional fit label used for automatic output-directory names
+and canonical raw-results metadata. When \code{NULL} (default), the label is
+derived from the expression supplied to \code{fit}.}
 
 \item{outputDir}{character; path of the subdirectory used to store all
 bootstrap cache files and output tables.  When \code{NULL} (default), the
@@ -99,12 +100,11 @@ for the duration of the bootstrap run.}
 \value{
 A named list with elements:
 \describe{
-\item{\code{seed}}{Integer vector: full RNG state before resampling (also
-saved as \file{bootstrap_seed.rds} in \code{outputDir}).}
-\item{\code{results}}{Data frame: one row per successful replicate with
-columns \code{replicate}, \code{<par>.Estimate}, and
-\code{<par>.BackTransformed} for every fixed-effect parameter (also
-written as \file{bootstrap_results.csv}).}
+\item{\code{seed}}{Integer: persisted bootstrap master seed (also saved as
+\file{boot_seed.rds} in \code{outputDir}).}
+\item{\code{results}}{Data frame: canonical shared raw-results rows for the
+reference fit plus all bootstrap replicates (also written as
+\file{raw_results.csv}).}
 \item{\code{summary}}{Data frame: original \code{parFixedDf} augmented
 with columns \code{Bootstrap Estimate}, \code{Bootstrap SE},
 \code{Bootstrap \%RSE}, \code{Bootstrap CI Lower},

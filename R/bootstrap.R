@@ -315,21 +315,111 @@ addConfboundsToVar <- function(var, confLower, confUpper, sigdig = 3) {
   unlist(res)
 }
 
+.bootstrapRecord <- function(success, value = NULL, error = NA_character_) {
+  list(
+    success = isTRUE(success),
+    value = value,
+    error = if (length(error) == 0L) {
+      NA_character_
+    } else {
+      as.character(error[[1L]])
+    }
+  )
+}
+
+.bootstrapModelValue <- function(fit) {
+  list(
+    omega = fit$omega,
+    parFixedDf = fit$parFixedDf[, c("Estimate", "Back-transformed")],
+    message = fit$message,
+    warnings = fit$warnings
+  )
+}
+
+.bootstrapSuccessfulValues <- function(records) {
+  Filter(
+    Negate(is.null),
+    lapply(records, function(record) {
+      if (isTRUE(record$success)) record$value else NULL
+    })
+  )
+}
+
+.bootstrapMasterSeed <- function(outputDir) {
+  path <- file.path(outputDir, "boot_seed.rds")
+  if (!file.exists(path)) {
+    return(NULL)
+  }
+
+  payload <- readRDS(path)
+  if (is.list(payload) && !is.null(payload$master_seed)) {
+    return(as.integer(payload$master_seed[[1L]]))
+  }
+  if (is.numeric(payload) && length(payload) == 1L) {
+    return(as.integer(payload[[1L]]))
+  }
+  NA_integer_
+}
+
+.bootstrapRawResults <- function(fit, fitName, fitRecords, nboot) {
+  schema <- nlmixr2utils::rawResultsSchema(fit)
+  rows <- vector("list", nboot + 1L)
+  rows[[1L]] <- nlmixr2utils::rawResultsRow(
+    fit = fit,
+    source = "bootstrap",
+    hypothesis = "reference",
+    sample = 0L,
+    modelLabel = fitName,
+    role = "reference",
+    schema = schema
+  )
+
+  for (i in seq_len(nboot)) {
+    record <- fitRecords[[i]]
+    rows[[i + 1L]] <- if (isTRUE(record$success) && !is.null(record$value)) {
+      nlmixr2utils::rawResultsRow(
+        fit = record$value,
+        source = "bootstrap",
+        hypothesis = "sample",
+        sample = i,
+        modelLabel = fitName,
+        role = "sample",
+        schema = schema
+      )
+    } else {
+      nlmixr2utils::rawResultsRow(
+        fit = NULL,
+        source = "bootstrap",
+        hypothesis = "sample",
+        sample = i,
+        modelLabel = fitName,
+        role = "sample",
+        errorMessage = record$error,
+        minimizationSuccessful = 0L,
+        covarianceStepSuccessful = 0L,
+        schema = schema
+      )
+    }
+  }
+
+  do.call(rbind, rows)
+}
+
 #' Write bootstrap output files and print a console summary
 #'
-#' Writes two files to \code{outputDir}:
+#' Writes bootstrap run artifacts to \code{outputDir}:
 #' \describe{
-#'   \item{\code{bootstrap_results.csv}}{One row per successful replicate with
-#'     replicate number and all fixed-effect parameter estimates (both the
-#'     log/model-scale Estimate and the Back-transformed value).}
+#'   \item{\code{raw_results.csv}}{Canonical shared raw-results table with one
+#'     reference row (\code{sample = 0}) plus one row per bootstrap replicate.}
 #'   \item{\code{bootstrap_summary.txt}}{Human-readable summary including the
-#'     random seed used for resampling, original parameter estimates, and
-#'     bootstrap confidence intervals.}
+#'     persisted master seed, original parameter estimates, and bootstrap
+#'     confidence intervals.}
 #' }
 #' Also prints a concise summary to the console.
 #'
 #' @param fit nlmixr2 fit object (already augmented with bootstrap results)
 #' @param bootSummary result of \code{getBootstrapSummary()}
+#' @param rawResults canonical bootstrap raw-results table
 #' @param outputDir path to the permanent output directory
 #' @param fitName model name string
 #' @param nboot total number of bootstrap replicates requested
@@ -339,6 +429,7 @@ addConfboundsToVar <- function(var, confLower, confUpper, sigdig = 3) {
 .writeBootstrapOutput <- function(
   fit,
   bootSummary,
+  rawResults,
   outputDir,
   fitName,
   nboot,
@@ -348,72 +439,21 @@ addConfboundsToVar <- function(var, confLower, confUpper, sigdig = 3) {
     dir.create(outputDir, recursive = TRUE)
   }
 
-  # -- 1. Per-replicate results table -----------------------------------------
-  # Read each modelsEnsemble_*.rds, extract replicate index from filename,
-  # skip failed-replicate placeholders (length == 0).
-  mod_files <- list.files(
-    outputDir,
-    pattern = "modelsEnsemble_[0-9]+\\.rds",
-    full.names = FALSE
-  )
-  if (length(mod_files) > 0L) {
-    mod_idx_raw <- as.integer(gsub(
-      "modelsEnsemble_([0-9]+)\\.rds",
-      "\\1",
-      mod_files
-    ))
-    ord <- order(mod_idx_raw)
-    mod_files <- mod_files[ord]
-    mod_indices <- mod_idx_raw[ord]
-
-    row_list <- lapply(seq_along(mod_files), function(i) {
-      m <- tryCatch(
-        readRDS(file.path(outputDir, mod_files[i])),
-        error = function(e) list()
-      )
-      if (length(m) == 0L || is.null(m$parFixedDf)) {
-        return(NULL)
-      }
-      par_df <- m$parFixedDf
-      row <- data.frame(replicate = mod_indices[i], stringsAsFactors = FALSE)
-      for (par in rownames(par_df)) {
-        col_est <- gsub("[^A-Za-z0-9_]", ".", par)
-        row[[paste0(col_est, ".Estimate")]] <- par_df[par, "Estimate"]
-        row[[paste0(col_est, ".BackTransformed")]] <- par_df[
-          par,
-          "Back-transformed"
-        ]
-      }
-      row
-    })
-    row_list <- Filter(Negate(is.null), row_list)
-
-    if (length(row_list) > 0L) {
-      results_df <- do.call(rbind, row_list)
-      csv_path <- file.path(outputDir, "bootstrap_results.csv")
-      utils::write.csv(results_df, csv_path, row.names = FALSE)
-    } else {
-      results_df <- NULL
-      csv_path <- NULL
-    }
-    n_ok <- length(row_list)
-  } else {
-    results_df <- NULL
-    csv_path <- NULL
-    n_ok <- 0L
-  }
+  results_out <- nlmixr2utils::writeRawResults(rawResults, outputDir)
+  results_df <- results_out$data
+  csv_path <- results_out$csvPath
+  sample_rows <- results_df$role == "sample"
+  failed_rows <- sample_rows &
+    !is.na(results_df$error_message) &
+    nzchar(results_df$error_message)
+  n_ok <- sum(sample_rows & !failed_rows)
 
   # -- 2. Random seed ----------------------------------------------------------
-  seed_file <- file.path(outputDir, "bootstrap_seed.rds")
-  boot_seed <- if (file.exists(seed_file)) readRDS(seed_file) else NULL
-
-  seed_kind <- if (!is.null(boot_seed)) RNGkind()[1] else "unknown"
-  seed_preview <- if (!is.null(boot_seed) && length(boot_seed) >= 8L) {
-    paste(boot_seed[seq_len(8L)], collapse = " ")
-  } else if (!is.null(boot_seed)) {
-    paste(boot_seed, collapse = " ")
-  } else {
+  boot_seed <- .bootstrapMasterSeed(outputDir)
+  seed_preview <- if (is.null(boot_seed) || is.na(boot_seed)) {
     "(not recorded)"
+  } else {
+    as.character(boot_seed)
   }
 
   # -- 3. Parameter summary lines ---------------------------------------------
@@ -492,10 +532,9 @@ addConfboundsToVar <- function(var, confLower, confUpper, sigdig = 3) {
   .ln(sprintf("Confidence interval : %.0f%%", ci * 100))
   .ln(sprintf("Output directory    : %s", outputDir))
   .ln()
-  .ln("Random seed (state before resampling)")
-  .ln(sprintf("  RNG kind    : %s", seed_kind))
-  .ln(sprintf("  Seed[1:8]   : %s", seed_preview))
-  .ln("  (full RNG state saved in bootstrap_seed.rds)")
+  .ln("Persisted master seed")
+  .ln(sprintf("  Seed        : %s", seed_preview))
+  .ln("  (saved in boot_seed.rds)")
   .ln()
   .ln(strrep("-", 78))
   .ln("Fixed-effect parameter summary")
@@ -516,15 +555,9 @@ addConfboundsToVar <- function(var, confLower, confUpper, sigdig = 3) {
   # -- 6. Console summary -----------------------------------------------------
   cli::cli_rule(left = "Bootstrap output")
   cli::cli_inform(c("i" = "Output directory  : {outputDir}"))
-  if (!is.null(csv_path)) {
-    cli::cli_inform(c(
-      "i" = "Results table     : bootstrap_results.csv ({n_ok} replicates, {length(par_names)} parameters)"
-    ))
-  } else {
-    cli::cli_warn(c(
-      "!" = "Results table     : (no successful replicates \u2014 CSV not written)"
-    ))
-  }
+  cli::cli_inform(c(
+    "i" = "Results table     : raw_results.csv ({n_ok} successful sample fit{?s})"
+  ))
   cli::cli_inform(c("i" = "Summary file      : bootstrap_summary.txt"))
   cli::cli_rule(left = "Parameter summary")
   cli::cli_inform(c(
@@ -563,8 +596,9 @@ addConfboundsToVar <- function(var, confLower, confUpper, sigdig = 3) {
 #'   probability of each subject is the same
 #' @param restart a boolean that indicates if a previous session has
 #'   to be restarted; default value is FALSE
-#' @param fitName Name of fit to be saved (by default the variable
-#'   name supplied to fit)
+#' @param fitName Optional fit label used for automatic output-directory names
+#'   and canonical raw-results metadata. When `NULL` (default), the label is
+#'   derived from the expression supplied to `fit`.
 #' @param stdErrType This gives the standard error type for the
 #'   updated standard errors; The current possibilities are: `"perc"`
 #'   which gives the standard errors by percentiles (default), `"sd"`
@@ -616,12 +650,11 @@ addConfboundsToVar <- function(var, confLower, confUpper, sigdig = 3) {
 #' @author Vipul Mann, Matthew Fidler
 #' @return A named list with elements:
 #' \describe{
-#'   \item{\code{seed}}{Integer vector: full RNG state before resampling (also
-#'     saved as \file{bootstrap_seed.rds} in \code{outputDir}).}
-#'   \item{\code{results}}{Data frame: one row per successful replicate with
-#'     columns \code{replicate}, \code{<par>.Estimate}, and
-#'     \code{<par>.BackTransformed} for every fixed-effect parameter (also
-#'     written as \file{bootstrap_results.csv}).}
+#'   \item{\code{seed}}{Integer: persisted bootstrap master seed (also saved as
+#'     \file{boot_seed.rds} in \code{outputDir}).}
+#'   \item{\code{results}}{Data frame: canonical shared raw-results rows for the
+#'     reference fit plus all bootstrap replicates (also written as
+#'     \file{raw_results.csv}).}
 #'   \item{\code{summary}}{Data frame: original \code{parFixedDf} augmented
 #'     with columns \code{Bootstrap Estimate}, \code{Bootstrap SE},
 #'     \code{Bootstrap \%RSE}, \code{Bootstrap CI Lower},
@@ -699,7 +732,7 @@ runBootstrap <- function(
   pvalues = NULL,
   restart = FALSE,
   plotHist = FALSE,
-  fitName = as.character(substitute(fit)),
+  fitName = NULL,
   outputDir = NULL,
   updateFit = TRUE,
   returnType = c("model", "fitList", "modelList"),
@@ -725,28 +758,9 @@ runBootstrap <- function(
     }
     performStrat <- TRUE
   }
-
-  # -- Resolve permanent output directory (SCM-style numbered scheme) ----------
-  if (is.null(outputDir)) {
-    .fit_nm <- gsub("[^A-Za-z0-9_.]", "_", fitName)
-    .boot_pattern <- paste0("^", .fit_nm, "_boot_[0-9]+$")
-    .existing <- sort(grep(
-      .boot_pattern,
-      list.dirs(".", full.names = FALSE, recursive = FALSE),
-      value = TRUE
-    ))
-    if (!restart && length(.existing) > 0L) {
-      # Resume: use the most recently numbered directory
-      .nums <- as.integer(sub(paste0("^", .fit_nm, "_boot_"), "", .existing))
-      outputDir <- .existing[which.max(.nums)]
-    } else {
-      # Fresh run: increment
-      outputDir <- paste0(.fit_nm, "_boot_", length(.existing) + 1L)
-    }
+  if (is.null(fitName)) {
+    fitName <- nlmixr2utils::deriveFitName(substitute(fit))
   }
-  # Keep outputDir as a relative path so that modelBootstrap()'s legacy
-  # paste0("./", output_dir, ...) constructions remain valid.
-  # normalizePath() would convert to absolute and produce "./C:\..." on Windows.
 
   if (performStrat) {
     resBootstrap <-
@@ -811,13 +825,14 @@ runBootstrap <- function(
   out <- .writeBootstrapOutput(
     fit = fit,
     bootSummary = bootSummary,
-    outputDir = outputDir,
+    rawResults = resBootstrap$rawResults,
+    outputDir = resBootstrap$outputDir,
     fitName = fitName,
     nboot = nboot,
     ci = ci
   )
 
-  abs_output_dir <- normalizePath(outputDir, mustWork = FALSE)
+  abs_output_dir <- normalizePath(resBootstrap$outputDir, mustWork = FALSE)
 
   # -- Optionally attach results to the original fit object -------------------
   # A single new $bootstrap slot is added; no pre-existing slot is modified.
@@ -1016,6 +1031,9 @@ modelBootstrap <- function(
   workers = NULL
 ) {
   nlmixr2est::assertNlmixrFit(fit)
+  if (is.null(fitName)) {
+    fitName <- nlmixr2utils::deriveFitName(substitute(fit))
+  }
   if (missing(stratVar)) {
     performStrat <- FALSE
     stratVar <- NULL
@@ -1045,186 +1063,32 @@ modelBootstrap <- function(
   fitMeth <- getFitMethod(fit)
 
   bootData <- vector(mode = "list", length = nboot)
-
-  if (is.null(fit$bootstrapMd5)) {
-    bootstrapMd5 <- fit$md5
-    assign("bootstrapMd5", bootstrapMd5, envir = fit$env)
-  }
-
-  output_dir <- if (!is.null(outputDir)) {
-    outputDir
-  } else {
-    paste0("nlmixr2BootstrapCache_", fitName, "_", fit$bootstrapMd5)
-  }
-
-  if (!dir.exists(output_dir)) {
-    dir.create(output_dir)
-  } else if (dir.exists(output_dir) && restart == TRUE) {
-    unlink(output_dir, recursive = TRUE, force = TRUE) # unlink any of the previous directories
-    dir.create(output_dir) # create a fresh directory
-  }
-
-  fnameBootDataPattern <-
-    paste0("boot_data_", "[0-9]+", ".rds", sep = "")
-  fileExists <-
-    list.files(paste0("./", output_dir), pattern = fnameBootDataPattern)
-
-  if (length(fileExists) == 0) {
-    restart <- TRUE
-  }
-
-  if (!restart) {
-    # read saved bootData from boot_data files on disk
-    if (length(fileExists) > 0) {
-      cli::cli_alert_success(
-        "resuming bootstrap data sampling using data at {paste0('./', output_dir)}"
-      )
-
-      bootData <- lapply(fileExists, function(x) {
-        readRDS(paste0("./", output_dir, "/", x, sep = ""))
-      })
-
-      startCtr <- length(bootData) + 1
-    } else {
-      cli::cli_alert_danger(
-        cli::col_red(
-          "need the data files at {.file {paste0(getwd(), '/', output_dir)}} to resume"
-        )
-      )
-      stop("aborting...resume file missing", call. = FALSE)
-    }
-  } else {
-    startCtr <- 1
-  }
-
-  # Save random seed before any new sampling so it can be reported later.
-  # Only write on the first run (or after restart); preserve existing seed on resume.
-  seed_file <- file.path(output_dir, "bootstrap_seed.rds")
-  if (!file.exists(seed_file)) {
-    saveRDS(.Random.seed, seed_file)
-  }
-
-  # Generate additional samples (if nboot>startCtr)
-  if (nboot >= startCtr) {
-    for (mod_idx in startCtr:nboot) {
-      bootData[[mod_idx]] <- sampling(
-        data,
-        nsamp = nSampIndiv,
-        uid_colname = uidCol,
-        pvalues = pvalues,
-        performStrat = performStrat,
-        stratVar = stratVar
-      )
-
-      # save bootData in curr directory: read the file using readRDS()
-      attr(bootData, "randomSeed") <- .Random.seed
-      saveRDS(
-        bootData[[mod_idx]],
-        file = paste0(
-          "./",
-          output_dir,
-          "/boot_data_",
-          mod_idx,
-          ".rds"
-        )
-      )
-    }
-  }
-
-  # check if number of samples in stored file is the same as the required number of samples
-  fileExists <-
-    list.files(paste0("./", output_dir), pattern = fnameBootDataPattern)
-  bootData <- lapply(fileExists, function(x) {
-    readRDS(paste0("./", output_dir, "/", x, sep = ""))
-  })
-
-  # Fitting models to bootData now
-  fnameModelsEnsemblePattern <-
-    paste0("modelsEnsemble_", "[0-9]+", ".rds", sep = "")
-  modFileExists <-
-    list.files(paste0("./", output_dir), pattern = fnameModelsEnsemblePattern)
-
-  fnameFitEnsemblePattern <-
-    paste0("fitEnsemble_", "[0-9]+", ".rds", sep = "")
-  fitFileExists <- list.files(
-    paste0("./", output_dir),
-    pattern = fnameFitEnsemblePattern
+  run_dir <- nlmixr2utils::resolveRunDir(
+    "boot",
+    fitName,
+    restart,
+    outputDir = outputDir
   )
-
-  # Determine which replicate indices are already complete
-  completed_indices <- integer(0)
-  if (!restart) {
-    if (
-      length(modFileExists) > 0 &&
-        (length(fileExists) > 0)
-    ) {
-      cli::cli_alert_success(
-        "resuming bootstrap model fitting using data and models stored at {paste0(getwd(), '/', output_dir)}"
-      )
-      completed_indices <- as.integer(
-        gsub("fitEnsemble_([0-9]+)\\.rds", "\\1", fitFileExists)
-      )
-      curr_num_models <- length(completed_indices)
-      if (curr_num_models > nboot) {
-        .msg <- paste0(
-          "the model file already has {curr_num_models} models",
-          " when max models is {nboot}; using only the first {nboot} model(s)"
-        )
-        cli::cli_alert_danger(cli::col_red(.msg))
-        # Load and return immediately, capped at nboot
-        modelsEnsembleLoaded <- lapply(modFileExists, function(x) {
-          readRDS(paste0("./", output_dir, "/", x, sep = ""))
-        })
-        fitEnsembleLoaded <- lapply(fitFileExists, function(x) {
-          readRDS(paste0("./", output_dir, "/", x, sep = ""))
-        })
-        modelsEnsembleLoaded <- Filter(
-          function(x) length(x) > 0L,
-          modelsEnsembleLoaded[seq_len(nboot)]
-        )
-        fitEnsembleLoaded <- Filter(
-          function(x) !identical(x, NA),
-          fitEnsembleLoaded[seq_len(nboot)]
-        )
-        return(list(modelsEnsembleLoaded, fitEnsembleLoaded))
-      } else if (curr_num_models == nboot) {
-        cli::cli_alert_success(
-          "all {nboot} bootstrap models already complete, loading from {paste0(getwd(), '/', output_dir)}"
-        )
-        modelsEnsembleLoaded <- lapply(modFileExists, function(x) {
-          readRDS(paste0("./", output_dir, "/", x, sep = ""))
-        })
-        fitEnsembleLoaded <- lapply(fitFileExists, function(x) {
-          readRDS(paste0("./", output_dir, "/", x, sep = ""))
-        })
-        modelsEnsembleLoaded <- Filter(
-          function(x) length(x) > 0L,
-          modelsEnsembleLoaded
-        )
-        fitEnsembleLoaded <- Filter(
-          function(x) !identical(x, NA),
-          fitEnsembleLoaded
-        )
-        return(list(modelsEnsembleLoaded, fitEnsembleLoaded))
-      } else {
-        cli::cli_inform(
-          "estimating {nboot - curr_num_models} additional model(s) ..."
-        )
-      }
-    } else {
-      cli::cli_alert_danger(
-        cli::col_red(
-          "need both the data and the model files at: {paste0(getwd(), '/', output_dir)} to resume"
-        )
-      )
-      stop(
-        "aborting...data and model files missing at: {paste0(getwd(), '/', output_dir)}",
-        call. = FALSE
-      )
-    }
+  output_dir <- run_dir$path
+  if (identical(run_dir$mode, "overwrite") && dir.exists(output_dir)) {
+    unlink(output_dir, recursive = TRUE, force = TRUE)
   }
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
-  pending_indices <- setdiff(seq_len(nboot), completed_indices)
+  master_seed <- nlmixr2utils::withRunSeed(output_dir, prefix = "boot")
+  data_cache <- nlmixr2utils::taskCache(output_dir, "boot_data")
+  model_cache <- nlmixr2utils::taskCache(output_dir, "models")
+  fit_cache <- nlmixr2utils::taskCache(output_dir, "fits")
+
+  all_keys <- as.character(seq_len(nboot))
+  completed_keys <- intersect(
+    intersect(all_keys, model_cache$keys()),
+    intersect(all_keys, fit_cache$keys())
+  )
+  pending_indices <- as.integer(
+    nlmixr2utils::pendingTasks(all_keys, completed_keys)
+  )
+  completed_indices <- as.integer(completed_keys)
 
   # -- Startup banner ---------------------------------------------------------
   worker_desc <- if (is.null(workers)) {
@@ -1242,7 +1106,6 @@ modelBootstrap <- function(
     paste0("parallel (", workers, " workers)")
   }
   resume_note <- if (length(completed_indices) > 0L) {
-    # nolint: object_usage_linter.
     paste0(" (resuming; ", length(completed_indices), " already done)")
   } else {
     ""
@@ -1257,130 +1120,98 @@ modelBootstrap <- function(
     "i" = "Subjects / sample : {nSampIndiv}",
     "i" = "Stratification    : {if (performStrat) paste0('yes (', stratVar, ')') else 'no'}",
     "i" = "Execution         : {worker_desc}",
-    "i" = "Cache directory   : {output_dir}"
+    "i" = "Run directory     : {output_dir}"
   ))
   cli::cli_rule()
 
   # get control settings for the 'fit' object and save computation effort by not computing the tables
   .ctl <- nlmixr2utils::setQuietFastControl(fit$control)
 
-  nlmixr2utils::.withWorkerPlan(workers, {
-    # nolint: object_usage_linter.
-    nlmixr2utils::.plap(
-      # nolint: object_usage_linter.
-      pending_indices,
-      function(orig_idx) {
-        boot_data <- bootData[[orig_idx]]
-        n_subj <- length(unique(boot_data[[uidCol]])) # nolint: object_usage_linter.
-        cli::cli_rule(left = paste0("Replicate ", orig_idx, "/", nboot))
-        cli::cli_inform(c(
-          ">" = "Replicate {orig_idx}/{nboot} | method: {fitMeth} | {nrow(boot_data)} rows, {n_subj} subjects"
-        ))
-
-        fit_result <- tryCatch(
-          {
-            fit_r <- suppressWarnings(nlmixr2est::nlmixr2(
-              ui,
-              boot_data,
-              est = fitMeth,
-              control = .ctl
-            ))
-
-            multiple_fits <- list(
-              omega = fit_r$omega,
-              parFixedDf = fit_r$parFixedDf[, c(
-                "Estimate",
-                "Back-transformed"
-              )],
-              message = fit_r$message,
-              warnings = fit_r$warnings
+  if (length(pending_indices) > 0L) {
+    nlmixr2utils::.withWorkerPlan(workers, {
+      nlmixr2utils::.plap(
+        pending_indices,
+        function(orig_idx) {
+          key <- as.character(orig_idx)
+          boot_data <- if (data_cache$has(key)) {
+            data_cache$get(key)
+          } else {
+            sampled_data <- nlmixr2utils::withRunSeed(
+              output_dir,
+              key = paste0("bootstrap-data-", key),
+              prefix = "boot",
+              expr = sampling(
+                data,
+                nsamp = nSampIndiv,
+                uid_colname = uidCol,
+                pvalues = pvalues,
+                performStrat = performStrat,
+                stratVar = stratVar
+              )
             )
-
-            list(.failed = FALSE, fit = fit_r, models = multiple_fits)
-          },
-          error = function(error_message) {
-            message("error fitting the model")
-            message(error_message)
-            message("storing the models as NA ...")
-            list(
-              .failed = TRUE,
-              .reason = conditionMessage(error_message),
-              .idx = orig_idx
-            )
+            data_cache$put(key, sampled_data)
+            sampled_data
           }
-        )
+          bootData[[orig_idx]] <<- boot_data
+          n_subj <- length(unique(boot_data[[uidCol]]))
+          cli::cli_rule(left = paste0("Replicate ", orig_idx, "/", nboot))
+          cli::cli_inform(c(
+            ">" = "Replicate {orig_idx}/{nboot} | method: {fitMeth} | {nrow(boot_data)} rows, {n_subj} subjects"
+          ))
 
-        if (!isTRUE(fit_result$.failed)) {
-          saveRDS(
-            fit_result$models,
-            file = paste0(
-              "./",
-              output_dir,
-              "/modelsEnsemble_",
-              orig_idx,
-              ".rds"
-            )
+          fit_result <- tryCatch(
+            {
+              fit_r <- suppressWarnings(nlmixr2est::nlmixr2(
+                ui,
+                boot_data,
+                est = fitMeth,
+                control = .ctl
+              ))
+
+              list(
+                model = .bootstrapRecord(
+                  success = TRUE,
+                  value = .bootstrapModelValue(fit_r)
+                ),
+                fit = .bootstrapRecord(success = TRUE, value = fit_r)
+              )
+            },
+            error = function(error_message) {
+              cli::cli_warn(c(
+                "!" = "Replicate {orig_idx} failed to fit.",
+                "i" = "{conditionMessage(error_message)}"
+              ))
+              list(
+                model = .bootstrapRecord(
+                  success = FALSE,
+                  error = conditionMessage(error_message)
+                ),
+                fit = .bootstrapRecord(
+                  success = FALSE,
+                  error = conditionMessage(error_message)
+                )
+              )
+            }
           )
-          saveRDS(
-            fit_result$fit,
-            file = paste0(
-              "./",
-              output_dir,
-              "/fitEnsemble_",
-              orig_idx,
-              ".rds"
-            )
-          )
-        } else {
-          # Save NA placeholder so the index is treated as complete on resume
-          saveRDS(
-            list(),
-            file = paste0(
-              "./",
-              output_dir,
-              "/modelsEnsemble_",
-              orig_idx,
-              ".rds"
-            )
-          )
-          saveRDS(
-            NA,
-            file = paste0(
-              "./",
-              output_dir,
-              "/fitEnsemble_",
-              orig_idx,
-              ".rds"
-            )
-          )
+
+          model_cache$put(key, fit_result$model)
+          fit_cache$put(key, fit_result$fit)
+          invisible(NULL)
+        },
+        .label = function(orig_idx) {
+          paste0("replicate ", orig_idx, "/", nboot)
         }
-
-        invisible(NULL)
-      },
-      .label = function(orig_idx) {
-        paste0("replicate ", orig_idx, "/", nboot)
-      }
-    )
-  })
-
-  # Report any failures (fits stored as NA)
-  fitFileExists <- list.files(
-    paste0("./", output_dir),
-    pattern = fnameFitEnsemblePattern
-  )
-  n_failed <- sum(vapply(
-    fitFileExists,
-    function(f) {
-      r <- tryCatch(
-        readRDS(paste0("./", output_dir, "/", f)),
-        error = function(e) NULL
       )
-      identical(r, NA)
-    },
-    logical(1)
-  ))
+    })
+  }
+
+  fit_records <- lapply(all_keys, fit_cache$get)
+  model_records <- lapply(all_keys, model_cache$get)
+  n_failed <- sum(
+    !vapply(fit_records, function(x) isTRUE(x$success), logical(1))
+  )
   # Completion summary
-  n_ok <- nboot - n_failed # nolint: object_usage_linter.
+  n_ok <- nboot - n_failed
   cli::cli_rule(left = "Bootstrap complete")
   if (n_failed == 0L) {
     cli::cli_inform(c(
@@ -1399,27 +1230,18 @@ modelBootstrap <- function(
   }
   cli::cli_rule()
 
-  modFileExists <-
-    list.files(paste0("./", output_dir), pattern = fnameModelsEnsemblePattern)
+  modelsEnsemble <- .bootstrapSuccessfulValues(model_records)
+  fitEnsemble <- .bootstrapSuccessfulValues(fit_records)
+  raw_results <- .bootstrapRawResults(fit, fitName, fit_records, nboot = nboot)
+  nlmixr2utils::writeRawResults(raw_results, output_dir)
 
-  modelsEnsemble <- lapply(modFileExists, function(x) {
-    readRDS(paste0("./", output_dir, "/", x, sep = ""))
-  })
-  # Remove empty-list placeholders saved for failed replicates so that
-  # getBootstrapSummary (which uses names(fitList[[1]])) sees a valid entry first.
-  modelsEnsemble <- Filter(function(x) length(x) > 0L, modelsEnsemble)
-
-  fitFileExists <- list.files(
-    paste0("./", output_dir),
-    pattern = fnameFitEnsemblePattern
+  list(
+    modelsEnsemble,
+    fitEnsemble,
+    rawResults = raw_results,
+    outputDir = output_dir,
+    seed = master_seed
   )
-  fitEnsemble <- lapply(fitFileExists, function(x) {
-    readRDS(paste0("./", output_dir, "/", x, sep = ""))
-  })
-  # Remove NA placeholders for failed replicates from fitEnsemble as well.
-  fitEnsemble <- Filter(function(x) !identical(x, NA), fitEnsemble)
-
-  list(modelsEnsemble, fitEnsemble)
 }
 
 #' Get the nlmixr2 method used for fitting the model
@@ -1766,18 +1588,16 @@ bootstrapPlot <- function(x, ...) {
 #' @export
 #' @importFrom ggplot2 .data
 bootstrapPlot.nlmixr2FitCore <- function(x, ...) {
-  .fitName <- as.character(substitute(x))
   if (inherits(x, "nlmixr2FitCore")) {
     if (exists("bootSummary", x$env) && (!exists(".bootPlotData", x$env))) {
-      runBootstrap(x, x$bootSummary$nboot, plotHist = TRUE, fitName = .fitName)
+      runBootstrap(x, x$bootSummary$nboot, plotHist = TRUE)
     }
     if (exists(".bootPlotData", x$env)) {
       if (x$bootSummary$nboot != x$env$.bootPlotData$deltaN) {
         runBootstrap(
           x,
           x$bootSummary$nboot,
-          plotHist = TRUE,
-          fitName = .fitName
+          plotHist = TRUE
         )
       }
       .chisq <- x$env$.bootPlotData$chisq
